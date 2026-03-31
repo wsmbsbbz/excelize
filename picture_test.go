@@ -693,6 +693,83 @@ func TestGetCellImages(t *testing.T) {
 	assert.EqualError(t, err, "XML syntax error on line 1: invalid UTF-8")
 }
 
+func TestAddCellImageDISPIMG(t *testing.T) {
+	f := NewFile()
+	imgFile, err := os.ReadFile(filepath.Join("test", "images", "excel.png"))
+	assert.NoError(t, err)
+
+	// Test add a DISPIMG cell image to T2
+	assert.NoError(t, f.AddPictureFromBytes("Sheet1", "T2", &Picture{
+		Extension:  ".png",
+		File:       imgFile,
+		Format:     &GraphicOptions{AltText: "test image"},
+		InsertType: PictureInsertTypeDISPIMG,
+	}))
+
+	// Verify the DISPIMG formula was set on the cell
+	formula, err := f.GetCellFormula("Sheet1", "T2")
+	assert.NoError(t, err)
+	assert.True(t, strings.HasPrefix(formula, "_xlfn.DISPIMG(\"ID_"))
+	assert.True(t, strings.HasSuffix(formula, "\",1)"))
+
+	// Verify cellimages.xml was created with the right content
+	pics, err := f.GetPictures("Sheet1", "T2")
+	assert.NoError(t, err)
+	assert.Len(t, pics, 1)
+	assert.Equal(t, PictureInsertTypeDISPIMG, pics[0].InsertType)
+	assert.Equal(t, ".png", pics[0].Extension)
+	assert.Equal(t, "test image", pics[0].Format.AltText)
+
+	// Test add a second DISPIMG image to another cell
+	assert.NoError(t, f.AddPictureFromBytes("Sheet1", "A3", &Picture{
+		Extension:  ".png",
+		File:       imgFile,
+		Format:     &GraphicOptions{AltText: "second image"},
+		InsertType: PictureInsertTypeDISPIMG,
+	}))
+	pics2, err := f.GetPictures("Sheet1", "A3")
+	assert.NoError(t, err)
+	assert.Len(t, pics2, 1)
+	assert.Equal(t, "second image", pics2[0].Format.AltText)
+
+	// Test round-trip: save and re-open
+	buf, err := f.WriteToBuffer()
+	assert.NoError(t, err)
+	f2, err := OpenReader(buf)
+	assert.NoError(t, err)
+	pics3, err := f2.GetPictures("Sheet1", "T2")
+	assert.NoError(t, err)
+	assert.Len(t, pics3, 1)
+	assert.Equal(t, PictureInsertTypeDISPIMG, pics3[0].InsertType)
+	assert.Equal(t, "test image", pics3[0].Format.AltText)
+	assert.NoError(t, f2.Close())
+
+	// Test error: invalid cell reference
+	assert.Error(t, f.AddPictureFromBytes("Sheet1", "", &Picture{
+		Extension:  ".png",
+		File:       imgFile,
+		Format:     &GraphicOptions{},
+		InsertType: PictureInsertTypeDISPIMG,
+	}))
+
+	// Test error: invalid image extension
+	assert.Error(t, f.AddPictureFromBytes("Sheet1", "A1", &Picture{
+		Extension:  ".xyz",
+		File:       imgFile,
+		Format:     &GraphicOptions{},
+		InsertType: PictureInsertTypeDISPIMG,
+	}))
+
+	// Test error: invalid sheet
+	assert.Error(t, f.AddPictureFromBytes("SheetNotExist", "A1", &Picture{
+		Extension:  ".png",
+		File:       imgFile,
+		Format:     &GraphicOptions{},
+		InsertType: PictureInsertTypeDISPIMG,
+	}))
+	assert.NoError(t, f.Close())
+}
+
 func TestGetImageCells(t *testing.T) {
 	f := NewFile()
 	f.Sheet.Delete("xl/worksheets/sheet1.xml")

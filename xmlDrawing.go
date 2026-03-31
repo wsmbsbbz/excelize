@@ -414,6 +414,23 @@ type xdrTxBody struct {
 	P      []*aP    `xml:"a:p"`
 }
 
+// xlsxCellImages defines the structure used to serialize the Kingsoft WPS
+// Office embedded cell images (xl/cellimages.xml).
+type xlsxCellImages struct {
+	XMLName   xml.Name          `xml:"etc:cellImages"`
+	Xdr       string            `xml:"xmlns:xdr,attr"`
+	R         string            `xml:"xmlns:r,attr"`
+	A         string            `xml:"xmlns:a,attr"`
+	Etc       string            `xml:"xmlns:etc,attr"`
+	CellImage []xlsxCellImage   `xml:"etc:cellImage"`
+}
+
+// xlsxCellImage defines the structure used to serialize a single Kingsoft WPS
+// Office embedded cell image entry.
+type xlsxCellImage struct {
+	Pic xlsxPic `xml:"xdr:pic"`
+}
+
 // Picture maps the format settings of the picture.
 type Picture struct {
 	Extension  string

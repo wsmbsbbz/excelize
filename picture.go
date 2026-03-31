@@ -13,7 +13,10 @@ package excelize
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"image"
 	"io"
 	"math"
@@ -249,6 +252,9 @@ func (f *File) AddPicture(sheet, cell, name string, opts *GraphicOptions) error 
 //	    }
 //	}
 func (f *File) AddPictureFromBytes(sheet, cell string, pic *Picture) error {
+	if pic.InsertType == PictureInsertTypeDISPIMG {
+		return f.addCellImage(sheet, cell, pic)
+	}
 	var drawingHyperlinkRID int
 	var hyperlinkType string
 	ext, ok := supportedImageTypes[strings.ToLower(pic.Extension)]
@@ -1128,6 +1134,120 @@ func (f *File) getCellImages(sheet, cell string) ([]Picture, error) {
 	return pics, err
 }
 
+// addCellImage provides a function to add a Kingsoft WPS Office embedded cell
+// image (DISPIMG) by given worksheet name, cell reference and picture.
+func (f *File) addCellImage(sheet, cell string, pic *Picture) error {
+	ext, ok := supportedImageTypes[strings.ToLower(pic.Extension)]
+	if !ok {
+		return ErrImgExt
+	}
+	// Validate cell reference
+	if _, _, err := CellNameToCoordinates(cell); err != nil {
+		return err
+	}
+	// Validate sheet exists
+	f.mu.Lock()
+	_, err := f.workSheetReader(sheet)
+	f.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	// Generate a unique image ID
+	b := make([]byte, 16)
+	if _, err = rand.Read(b); err != nil {
+		return err
+	}
+	imgID := "ID_" + strings.ToUpper(hex.EncodeToString(b))
+	// Store the image file in xl/media/
+	mediaStr := f.addMedia(pic.File, ext)
+	mediaTarget := strings.TrimPrefix(mediaStr, "xl/")
+	// Add relationship in xl/_rels/cellimages.xml.rels
+	rID := f.addRels(defaultXMLPathCellImagesRels, SourceRelationshipImage, mediaTarget, "")
+	// Build the cellImage entry
+	altText := ""
+	if pic.Format != nil {
+		altText = pic.Format.AltText
+	}
+	cellImg := xlsxCellImage{
+		Pic: xlsxPic{
+			NvPicPr: xlsxNvPicPr{
+				CNvPr: xlsxCNvPr{
+					ID:    f.countCellImages() + 1,
+					Name:  imgID,
+					Descr: altText,
+				},
+			},
+			BlipFill: xlsxBlipFill{
+				Blip: xlsxBlip{
+					R:     SourceRelationship.Value,
+					Embed: "rId" + strconv.Itoa(rID),
+				},
+				Stretch: xlsxStretch{},
+			},
+			SpPr: xlsxSpPr{
+				PrstGeom: xlsxPrstGeom{Prst: "rect"},
+			},
+		},
+	}
+	// Append to the in-memory CellImages structure
+	if f.CellImages == nil {
+		f.CellImages = &xlsxCellImages{
+			Xdr: NameSpaceDrawingMLSpreadSheet.Value,
+			R:   SourceRelationship.Value,
+			A:   NameSpaceDrawingML.Value,
+			Etc: NameSpaceWPSETCustomData,
+		}
+	}
+	f.CellImages.CellImage = append(f.CellImages.CellImage, cellImg)
+	// Add workbook-level relationship for cellimages.xml
+	f.addRels(defaultXMLPathWorkbookRels, SourceRelationshipWPSCellImage, "cellimages.xml", "")
+	// Add content type for cellimages.xml
+	if err = f.addCellImageContentType(); err != nil {
+		return err
+	}
+	// Set the DISPIMG formula on the cell
+	formula := fmt.Sprintf("_xlfn.DISPIMG(\"%s\",1)", imgID)
+	return f.SetCellFormula(sheet, cell, formula)
+}
+
+// countCellImages returns the number of cell images currently stored.
+func (f *File) countCellImages() int {
+	if f.CellImages == nil {
+		return 0
+	}
+	return len(f.CellImages.CellImage)
+}
+
+// addCellImageContentType adds the WPS cell image content type to
+// [Content_Types].xml.
+func (f *File) addCellImageContentType() error {
+	content, err := f.contentTypesReader()
+	if err != nil {
+		return err
+	}
+	content.mu.Lock()
+	defer content.mu.Unlock()
+	for _, v := range content.Overrides {
+		if v.PartName == "/xl/cellimages.xml" {
+			return nil
+		}
+	}
+	content.Overrides = append(content.Overrides, xlsxOverride{
+		PartName:    "/xl/cellimages.xml",
+		ContentType: ContentTypeWPSCellImage,
+	})
+	return nil
+}
+
+// cellImagesWriter provides a function to save xl/cellimages.xml after
+// serializing the structure.
+func (f *File) cellImagesWriter() {
+	if f.CellImages != nil && len(f.CellImages.CellImage) > 0 {
+		v, _ := xml.Marshal(f.CellImages)
+		f.saveFileList(defaultXMLPathCellImages, v)
+	}
+}
+
 // getDispImages provides a function to get the Kingsoft WPS Office embedded
 // cell images by given worksheet name and cell reference.
 func (f *File) getDispImages(sheet, cell string) ([]Picture, error) {
@@ -1142,29 +1262,56 @@ func (f *File) getDispImages(sheet, cell string) ([]Picture, error) {
 	if err != nil {
 		return nil, err
 	}
-	cellImages, err := f.cellImagesReader()
-	if err != nil {
-		return nil, err
-	}
 	rels, err := f.relsReader(defaultXMLPathCellImagesRels)
 	if rels == nil {
 		return nil, err
 	}
 	var pics []Picture
-	for _, cellImg := range cellImages.CellImage {
-		if cellImg.Pic.NvPicPr.CNvPr.Name == imgID {
-			for _, r := range rels.Relationships {
-				if r.ID == cellImg.Pic.BlipFill.Blip.Embed {
-					pic := Picture{Extension: filepath.Ext(r.Target), Format: &GraphicOptions{}, InsertType: PictureInsertTypeDISPIMG}
-					if buffer, _ := f.Pkg.Load("xl/" + r.Target); buffer != nil {
-						pic.File = buffer.([]byte)
-						pic.Format.AltText = cellImg.Pic.NvPicPr.CNvPr.Descr
-						pic.Format.Name = cellImg.Pic.NvPicPr.CNvPr.Name
-						pics = append(pics, pic)
-					}
-				}
+	// Search in-memory CellImages (written via addCellImage)
+	if f.CellImages != nil {
+		for _, cellImg := range f.CellImages.CellImage {
+			if cellImg.Pic.NvPicPr.CNvPr.Name == imgID {
+				pics = append(pics, f.matchCellImageRels(cellImg.Pic.NvPicPr.CNvPr, cellImg.Pic.BlipFill.Blip.Embed, rels)...)
 			}
 		}
 	}
+	// Search deserialized CellImages (loaded from file)
+	cellImages, err := f.cellImagesReader()
+	if err != nil {
+		return pics, err
+	}
+	for _, cellImg := range cellImages.CellImage {
+		if cellImg.Pic.NvPicPr.CNvPr.Name == imgID {
+			pics = append(pics, f.matchCellImageRels(decodeCNvPrToXlsx(cellImg.Pic.NvPicPr.CNvPr), cellImg.Pic.BlipFill.Blip.Embed, rels)...)
+		}
+	}
 	return pics, err
+}
+
+// matchCellImageRels matches a cell image's blip embed ID against relationships
+// and returns the matching pictures.
+func (f *File) matchCellImageRels(cnvPr xlsxCNvPr, embedID string, rels *xlsxRelationships) []Picture {
+	var pics []Picture
+	for _, r := range rels.Relationships {
+		if r.ID == embedID {
+			pic := Picture{Extension: filepath.Ext(r.Target), Format: &GraphicOptions{}, InsertType: PictureInsertTypeDISPIMG}
+			if buffer, _ := f.Pkg.Load("xl/" + r.Target); buffer != nil {
+				pic.File = buffer.([]byte)
+				pic.Format.AltText = cnvPr.Descr
+				pic.Format.Name = cnvPr.Name
+				pics = append(pics, pic)
+			}
+		}
+	}
+	return pics
+}
+
+// decodeCNvPrToXlsx converts a decoded CNvPr to the xlsxCNvPr type for
+// uniform processing.
+func decodeCNvPrToXlsx(d decodeCNvPr) xlsxCNvPr {
+	return xlsxCNvPr{
+		ID:    d.ID,
+		Name:  d.Name,
+		Descr: d.Descr,
+	}
 }

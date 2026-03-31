@@ -48,6 +48,7 @@ type File struct {
 	Comments         map[string]*xlsxComments
 	ContentTypes     *xlsxTypes
 	DecodeVMLDrawing map[string]*decodeVmlDrawing
+	CellImages       *xlsxCellImages
 	DecodeCellImages *decodeCellImages
 	Drawings         sync.Map
 	Path             string
