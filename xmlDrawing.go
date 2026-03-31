@@ -417,18 +417,63 @@ type xdrTxBody struct {
 // xlsxCellImages defines the structure used to serialize the Kingsoft WPS
 // Office embedded cell images (xl/cellimages.xml).
 type xlsxCellImages struct {
-	XMLName   xml.Name          `xml:"etc:cellImages"`
-	Xdr       string            `xml:"xmlns:xdr,attr"`
-	R         string            `xml:"xmlns:r,attr"`
-	A         string            `xml:"xmlns:a,attr"`
-	Etc       string            `xml:"xmlns:etc,attr"`
-	CellImage []xlsxCellImage   `xml:"etc:cellImage"`
+	XMLName   xml.Name        `xml:"etc:cellImages"`
+	Xdr       string          `xml:"xmlns:xdr,attr"`
+	R         string          `xml:"xmlns:r,attr"`
+	A         string          `xml:"xmlns:a,attr"`
+	Etc       string          `xml:"xmlns:etc,attr"`
+	CellImage []xlsxCellImage `xml:"etc:cellImage"`
 }
 
 // xlsxCellImage defines the structure used to serialize a single Kingsoft WPS
 // Office embedded cell image entry.
 type xlsxCellImage struct {
-	Pic xlsxPic `xml:"xdr:pic"`
+	Pic xlsxCellImagePic `xml:"xdr:pic"`
+}
+
+// xlsxCellImagePic is a lightweight pic structure for cellimages.xml that
+// avoids serializing zero-value fields present in the shared xlsxPic struct.
+type xlsxCellImagePic struct {
+	NvPicPr  xlsxCellImageNvPicPr  `xml:"xdr:nvPicPr"`
+	BlipFill xlsxCellImageBlipFill `xml:"xdr:blipFill"`
+	SpPr     xlsxCellImageSpPr     `xml:"xdr:spPr"`
+}
+
+// xlsxCellImageNvPicPr is nvPicPr for cellimages.xml with a self-closing
+// cNvPicPr element.
+type xlsxCellImageNvPicPr struct {
+	CNvPr    xlsxCellImageCNvPr `xml:"xdr:cNvPr"`
+	CNvPicPr string             `xml:"xdr:cNvPicPr"`
+}
+
+// xlsxCellImageCNvPr is cNvPr for cellimages.xml, with descr omitempty.
+type xlsxCellImageCNvPr struct {
+	ID    int    `xml:"id,attr"`
+	Name  string `xml:"name,attr"`
+	Descr string `xml:"descr,attr,omitempty"`
+}
+
+// xlsxCellImageBlipFill is blipFill for cellimages.xml.
+type xlsxCellImageBlipFill struct {
+	Blip    xlsxCellImageBlip `xml:"a:blip"`
+	Stretch xlsxStretch       `xml:"a:stretch"`
+}
+
+// xlsxCellImageBlip is blip for cellimages.xml without redundant xmlns:r.
+type xlsxCellImageBlip struct {
+	Embed string `xml:"r:embed,attr"`
+}
+
+// xlsxCellImageSpPr is spPr for cellimages.xml.
+type xlsxCellImageSpPr struct {
+	Xfrm     xlsxXfrm             `xml:"a:xfrm"`
+	PrstGeom xlsxCellImagePrstGeom `xml:"a:prstGeom"`
+}
+
+// xlsxCellImagePrstGeom is prstGeom with avLst for cellimages.xml.
+type xlsxCellImagePrstGeom struct {
+	Prst  string `xml:"prst,attr"`
+	AvLst string `xml:"a:avLst"`
 }
 
 // Picture maps the format settings of the picture.

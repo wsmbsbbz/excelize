@@ -1152,6 +1152,11 @@ func (f *File) addCellImage(sheet, cell string, pic *Picture) error {
 	if err != nil {
 		return err
 	}
+	// Decode image dimensions
+	img, _, err := image.DecodeConfig(bytes.NewReader(pic.File))
+	if err != nil {
+		return err
+	}
 	// Generate a unique image ID
 	b := make([]byte, 16)
 	if _, err = rand.Read(b); err != nil {
@@ -1169,23 +1174,27 @@ func (f *File) addCellImage(sheet, cell string, pic *Picture) error {
 		altText = pic.Format.AltText
 	}
 	cellImg := xlsxCellImage{
-		Pic: xlsxPic{
-			NvPicPr: xlsxNvPicPr{
-				CNvPr: xlsxCNvPr{
+		Pic: xlsxCellImagePic{
+			NvPicPr: xlsxCellImageNvPicPr{
+				CNvPr: xlsxCellImageCNvPr{
 					ID:    f.countCellImages() + 1,
 					Name:  imgID,
 					Descr: altText,
 				},
 			},
-			BlipFill: xlsxBlipFill{
-				Blip: xlsxBlip{
-					R:     SourceRelationship.Value,
+			BlipFill: xlsxCellImageBlipFill{
+				Blip: xlsxCellImageBlip{
 					Embed: "rId" + strconv.Itoa(rID),
 				},
-				Stretch: xlsxStretch{},
 			},
-			SpPr: xlsxSpPr{
-				PrstGeom: xlsxPrstGeom{Prst: "rect"},
+			SpPr: xlsxCellImageSpPr{
+				Xfrm: xlsxXfrm{
+					Ext: xlsxPositiveSize2D{
+						Cx: img.Width * EMU,
+						Cy: img.Height * EMU,
+					},
+				},
+				PrstGeom: xlsxCellImagePrstGeom{Prst: "rect"},
 			},
 		},
 	}
@@ -1271,7 +1280,12 @@ func (f *File) getDispImages(sheet, cell string) ([]Picture, error) {
 	if f.CellImages != nil {
 		for _, cellImg := range f.CellImages.CellImage {
 			if cellImg.Pic.NvPicPr.CNvPr.Name == imgID {
-				pics = append(pics, f.matchCellImageRels(cellImg.Pic.NvPicPr.CNvPr, cellImg.Pic.BlipFill.Blip.Embed, rels)...)
+				cnvPr := xlsxCNvPr{
+					ID:    cellImg.Pic.NvPicPr.CNvPr.ID,
+					Name:  cellImg.Pic.NvPicPr.CNvPr.Name,
+					Descr: cellImg.Pic.NvPicPr.CNvPr.Descr,
+				}
+				pics = append(pics, f.matchCellImageRels(cnvPr, cellImg.Pic.BlipFill.Blip.Embed, rels)...)
 			}
 		}
 	}
